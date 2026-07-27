@@ -57,45 +57,47 @@
 
 <script>
 const SIGNALS = [
-  { key: 'vix',      label: 'VIX',            symbol: 'VIX',     decimals: 2, desc: 'Deploy SGOV reserve at your discretion when VIX signals genuine market fear.' },
-  { key: 'dxy',      label: 'DXY',            symbol: 'DX-Y.NYB',decimals: 2, desc: 'GDXJ exit if above 105 for 3 consecutive closes.' },
-  { key: 'wti',      label: 'WTI Crude',      symbol: 'WTI/USD', decimals: 2, desc: 'Accelerate XOP/XLE exit if below $60 sustained 30+ days.' },
-  { key: 'treasury', label: '10Y Treasury',   symbol: 'TLT',     decimals: 2, desc: 'Above 5% reinforces holding SGOV. Below 3.5% watch energy positions.' },
+  { key: 'vix',      label: 'VIX',            symbol: 'VXX',     decimals: 2, desc: 'Deploy SGOV reserve at your discretion when VIX signals genuine market fear. Tracked via VXX ETF.' },
+  { key: 'dxy',      label: 'DXY',            symbol: 'UUP',     decimals: 2, desc: 'GDXJ exit if above 30.50 for 3 consecutive closes. Tracked via UUP ETF.' },
+  { key: 'wti',      label: 'WTI Crude',      symbol: 'USO',     decimals: 2, desc: 'Accelerate XOP/XLE exit if below $90 (~$60 WTI) sustained 30+ days. Tracked via USO ETF.' },
+  { key: 'treasury', label: '10Y Treasury',   symbol: 'TLT',     decimals: 2, desc: 'Below $80 (yield above ~5%) reinforces holding SGOV. Above $99 (yield below ~3.5%) watch energy positions. Tracked via TLT ETF.' },
   { key: 'eurusd',   label: 'EUR/USD',        symbol: 'EUR/USD', decimals: 4, desc: 'Below 1.05 watch IEFA and FAN. Above 1.12 bullish for IEFA and FAN.' },
   { key: 'sox',      label: 'SOX',            symbol: 'SOXX',    decimals: 2, desc: 'Down 20% from peak: watch IEMG and URA. Down 30%: review URA sizing.' },
 ];
 
 const ALERT_RULES = [
-  { color: '#ef4444', if: 'DXY above 105 for 3 consecutive closes',             then: 'Sell ALL GDXJ across all accounts.' },
+  { color: '#ef4444', if: 'UUP above 30.50 for 3 consecutive closes',           then: 'Sell ALL GDXJ across all accounts.' },
   { color: '#f59e0b', if: 'VIX elevated — your judgment',                        then: 'Deploy SGOV reserve into IEFA and IEMG at discount. IRA reserve: $76,343. Brokerage 2 reserve: $60,000.' },
-  { color: '#f59e0b', if: 'WTI below $60 sustained 30+ days',                    then: 'Accelerate XOP and XLE exits immediately. Rotate into IEFA.' },
+  { color: '#f59e0b', if: 'USO below $90 (~$60 WTI) sustained 30+ days',        then: 'Accelerate XOP and XLE exits immediately. Rotate into IEFA.' },
   { color: '#f59e0b', if: 'Uranium spot below $50/lb',                           then: 'Review URA sizing across all accounts. Check manually at tradingeconomics.com/commodity/uranium.' },
   { color: '#6366f1', if: 'VIX rising AND DXY falling simultaneously',           then: 'Maximum conviction deployment signal. Deploy SGOV reserve aggressively into IEFA and IEMG.' },
-  { color: '#ef4444', if: 'WTI below $60 AND VIX above 35 sustained 30+ days',  then: 'No energy positions remaining. Monitor IEMG for emerging market secondary impact.' },
+  { color: '#ef4444', if: 'USO below $90 (~$60 WTI) AND VXX above 35 sustained 30+ days', then: 'No energy positions remaining. Monitor IEMG for emerging market secondary impact.' },
 ];
 
 function getStatus(key, val) {
   if (val === null) return { color: '#475569', label: 'No data' };
   switch (key) {
     case 'vix':
-      if (val >= 40) return { color: '#ef4444', label: 'Structural Break' };
-      if (val >= 36) return { color: '#f97316', label: 'Confirmed Fear' };
-      if (val >= 28) return { color: '#f59e0b', label: 'Elevated Stress' };
-      if (val < 18)  return { color: '#6366f1', label: 'Complacency' };
+      if (val >= 35) return { color: '#ef4444', label: 'Structural Break' };
+      if (val >= 28) return { color: '#f97316', label: 'Confirmed Fear' };
+      if (val >= 22) return { color: '#f59e0b', label: 'Elevated Stress' };
+      if (val < 15)  return { color: '#6366f1', label: 'Complacency' };
       return { color: '#34d399', label: 'Normal' };
     case 'dxy':
-      if (val >= 105) return { color: '#ef4444', label: 'EXIT GDXJ' };
-      if (val >= 102) return { color: '#f59e0b', label: 'Watch Hard Assets' };
-      if (val < 98)   return { color: '#34d399', label: 'Dollar Weakness' };
+      if (val >= 30.50) return { color: '#ef4444', label: 'EXIT GDXJ' };
+      if (val >= 29.50) return { color: '#f59e0b', label: 'Watch Hard Assets' };
+      if (val < 28.00)  return { color: '#34d399', label: 'Dollar Weakness' };
       return { color: '#94a3b8', label: 'Neutral' };
     case 'wti':
-      if (val < 45)  return { color: '#ef4444', label: 'Demand Destruction' };
-      if (val < 60)  return { color: '#f59e0b', label: 'Watch Exits' };
-      if (val <= 75) return { color: '#34d399', label: 'Healthy Range' };
+      // USO tracked ~1.5x WTI spot (WTI $83.5/bbl == USO $126.78, Jul 2026); ratio drifts with contango/roll costs, recheck periodically
+      if (val < 67.5)   return { color: '#ef4444', label: 'Demand Destruction' };
+      if (val < 90)     return { color: '#f59e0b', label: 'Watch Exits' };
+      if (val <= 112.5) return { color: '#34d399', label: 'Healthy Range' };
       return { color: '#6366f1', label: 'Strong' };
     case 'treasury':
-      if (val > 5)   return { color: '#ef4444', label: 'Fiscal Stress' };
-      if (val < 3.5) return { color: '#f59e0b', label: 'Recession Signal' };
+      // TLT price moves inverse to yield (long duration ETF); calibrated at 10Y yield 4.64% == TLT $83.77, Jul 2026
+      if (val < 80)  return { color: '#ef4444', label: 'Fiscal Stress' };
+      if (val > 99)  return { color: '#f59e0b', label: 'Recession Signal' };
       return { color: '#34d399', label: 'Normal' };
     case 'eurusd':
       if (val < 1.05) return { color: '#f59e0b', label: 'Euro Weakness' };
@@ -117,9 +119,15 @@ async function fetchPrice(symbol) {
     const url = `/api/price?symbol=${encodeURIComponent(symbol)}`;
     const res = await fetch(url);
     const data = await res.json();
-    if (data && data.price) return parseFloat(data.price);
+    if (!res.ok || !data || data.price === undefined || data.price === null) {
+      console.error(`[signals] ${symbol} returned no usable price:`, data);
+      return null;
+    }
+    return parseFloat(data.price);
+  } catch (err) {
+    console.error(`[signals] ${symbol} fetch failed:`, err);
     return null;
-  } catch { return null; }
+  }
 }
 
 async function fetchAll() {
