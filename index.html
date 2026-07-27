@@ -56,8 +56,6 @@
 </div>
 
 <script>
-const API_KEY = '1c31edc3670f45afa55e13fb21424fcd';
-
 const SIGNALS = [
   { key: 'vix',      label: 'VIX',            symbol: 'VIX',     decimals: 2, desc: 'Deploy SGOV reserve at your discretion when VIX signals genuine market fear.' },
   { key: 'dxy',      label: 'DXY',            symbol: 'DX-Y.NYB',decimals: 2, desc: 'GDXJ exit if above 105 for 3 consecutive closes.' },
@@ -116,7 +114,7 @@ function prefix(key) {
 
 async function fetchPrice(symbol) {
   try {
-    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${API_KEY}`;
+    const url = `/api/price?symbol=${encodeURIComponent(symbol)}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data && data.price) return parseFloat(data.price);
