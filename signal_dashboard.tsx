@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Fortified Fortress | Signal Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #020817; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px 16px; min-height: 100vh; }
+  .container { max-width: 700px; margin: 0 auto; }
+  .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
+  .header-left .eyebrow { font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px; }
+  .header-left h1 { font-size: 22px; font-weight: 700; color: #f1f5f9; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .updated { font-size: 11px; color: #334155; }
+  .refresh-btn { background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .refresh-btn:hover { background: #334155; }
+  .error { background: #3b1e1e; border: 1px solid #7f1d1d; border-radius: 8px; padding: 10px 14px; color: #f87171; font-size: 13px; margin-bottom: 20px; }
+  .signals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 32px; }
+  .signal-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px; }
+  .signal-label { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .signal-value { font-size: 24px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; }
+  .signal-status { font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+  .signal-desc { font-size: 10px; color: #475569; line-height: 1.5; }
+  .alert-section { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 18px 20px; }
+  .alert-title { font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 16px; }
+  .alert-rule { display: flex; gap: 14px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid #0a0f1a; }
+  .alert-rule:last-child { border-bottom: none; }
+  .rule-bar { width: 3px; min-width: 3px; align-self: stretch; border-radius: 2px; }
+  .rule-if { font-size: 12px; color: #94a3b8; font-weight: 600; margin-bottom: 3px; }
+  .rule-then { font-size: 11px; color: #475569; }
+  .uranium-note { font-size: 10px; color: #475569; margin-top: 8px; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="header-left">
+      <div class="eyebrow">Fortified Fortress</div>
+      <h1>Signal Dashboard</h1>
+    </div>
+    <div class="header-right">
+      <span class="updated" id="updated-time"></span>
+      <button class="refresh-btn" onclick="fetchAll()">Refresh</button>
+    </div>
+  </div>
+
+  <div id="error-box" class="error" style="display:none;"></div>
+
+  <div class="signals-grid" id="signals-grid"></div>
+
+  <div class="alert-section">
+    <div class="alert-title">Standing Alert Rules</div>
+    <div id="alert-rules"></div>
+  </div>
+</div>
+
+<script>
+const API_KEY = '1c31edc3670f45afa55e13fb21424fcd';
+
+const SIGNALS = [
+  { key: 'vix',      label: 'VIX',            symbol: 'VIX',     decimals: 2, desc: 'Deploy SGOV reserve at your discretion when VIX signals genuine market fear.' },
+  { key: 'dxy',      label: 'DXY',            symbol: 'DX-Y.NYB',decimals: 2, desc: 'GDXJ exit if above 105 for 3 consecutive closes.' },
+  { key: 'wti',      label: 'WTI Crude',      symbol: 'WTI/USD', decimals: 2, desc: 'Accelerate XOP/XLE exit if below $60 sustained 30+ days.' },
+  { key: 'treasury', label: '10Y Treasury',   symbol: 'TLT',     decimals: 2, desc: 'Above 5% reinforces holding SGOV. Below 3.5% watch energy positions.' },
+  { key: 'eurusd',   label: 'EUR/USD',        symbol: 'EUR/USD', decimals: 4, desc: 'Below 1.05 watch IEFA and FAN. Above 1.12 bullish for IEFA and FAN.' },
+  { key: 'sox',      label: 'SOX',            symbol: 'SOXX',    decimals: 2, desc: 'Down 20% from peak: watch IEMG and URA. Down 30%: review URA sizing.' },
+];
+
+const ALERT_RULES = [
+  { color: '#ef4444', if: 'DXY above 105 for 3 consecutive closes',             then: 'Sell ALL GDXJ across all accounts.' },
+  { color: '#f59e0b', if: 'VIX elevated — your judgment',                        then: 'Deploy SGOV reserve into IEFA and IEMG at discount. IRA reserve: $76,343. Brokerage 2 reserve: $60,000.' },
+  { color: '#f59e0b', if: 'WTI below $60 sustained 30+ days',                    then: 'Accelerate XOP and XLE exits immediately. Rotate into IEFA.' },
+  { color: '#f59e0b', if: 'Uranium spot below $50/lb',                           then: 'Review URA sizing across all accounts. Check manually at tradingeconomics.com/commodity/uranium.' },
+  { color: '#6366f1', if: 'VIX rising AND DXY falling simultaneously',           then: 'Maximum conviction deployment signal. Deploy SGOV reserve aggressively into IEFA and IEMG.' },
+  { color: '#ef4444', if: 'WTI below $60 AND VIX above 35 sustained 30+ days',  then: 'No energy positions remaining. Monitor IEMG for emerging market secondary impact.' },
+];
+
+function getStatus(key, val) {
+  if (val === null) return { color: '#475569', label: 'No data' };
+  switch (key) {
+    case 'vix':
+      if (val >= 40) return { color: '#ef4444', label: 'Structural Break' };
+      if (val >= 36) return { color: '#f97316', label: 'Confirmed Fear' };
+      if (val >= 28) return { color: '#f59e0b', label: 'Elevated Stress' };
+      if (val < 18)  return { color: '#6366f1', label: 'Complacency' };
+      return { color: '#34d399', label: 'Normal' };
+    case 'dxy':
+      if (val >= 105) return { color: '#ef4444', label: 'EXIT GDXJ' };
+      if (val >= 102) return { color: '#f59e0b', label: 'Watch Hard Assets' };
+      if (val < 98)   return { color: '#34d399', label: 'Dollar Weakness' };
+      return { color: '#94a3b8', label: 'Neutral' };
+    case 'wti':
+      if (val < 45)  return { color: '#ef4444', label: 'Demand Destruction' };
+      if (val < 60)  return { color: '#f59e0b', label: 'Watch Exits' };
+      if (val <= 75) return { color: '#34d399', label: 'Healthy Range' };
+      return { color: '#6366f1', label: 'Strong' };
+    case 'treasury':
+      if (val > 5)   return { color: '#ef4444', label: 'Fiscal Stress' };
+      if (val < 3.5) return { color: '#f59e0b', label: 'Recession Signal' };
+      return { color: '#34d399', label: 'Normal' };
+    case 'eurusd':
+      if (val < 1.05) return { color: '#f59e0b', label: 'Euro Weakness' };
+      if (val > 1.12) return { color: '#34d399', label: 'Euro Strength' };
+      return { color: '#94a3b8', label: 'Neutral' };
+    case 'sox':
+      return { color: '#94a3b8', label: 'See description' };
+    default:
+      return { color: '#94a3b8', label: '—' };
+  }
+}
+
+function prefix(key) {
+  return ['wti', 'treasury'].includes(key) ? '$' : '';
+}
+
+async function fetchPrice(symbol) {
+  try {
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${API_KEY}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data && data.price) return parseFloat(data.price);
+    return null;
+  } catch { return null; }
+}
+
+async function fetchAll() {
+  const btn = document.getElementById('refresh-btn') || document.querySelector('.refresh-btn');
+  btn.textContent = 'Fetching...';
+  btn.disabled = true;
+
+  const results = {};
+  await Promise.all(SIGNALS.map(async s => {
+    results[s.key] = await fetchPrice(s.symbol);
+  }));
+
+  renderSignals(results);
+  document.getElementById('updated-time').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  btn.textContent = 'Refresh';
+  btn.disabled = false;
+}
+
+function renderSignals(data) {
+  const grid = document.getElementById('signals-grid');
+  grid.innerHTML = SIGNALS.map(s => {
+    const val = data[s.key];
+    const { color, label } = getStatus(s.key, val);
+    const display = val !== null ? `${prefix(s.key)}${val.toFixed(s.decimals)}` : '--';
+    return `
+      <div class="signal-card">
+        <div class="signal-label">${s.label}</div>
+        <div class="signal-value">${display}</div>
+        <div class="signal-status" style="color:${color}">${label}</div>
+        <div class="signal-desc">${s.desc}</div>
+      </div>`;
+  }).join('');
+
+  const rulesEl = document.getElementById('alert-rules');
+  rulesEl.innerHTML = ALERT_RULES.map(r => `
+    <div class="alert-rule">
+      <div class="rule-bar" style="background:${r.color}"></div>
+      <div>
+        <div class="rule-if">IF: ${r.if}</div>
+        <div class="rule-then">THEN: ${r.then}</div>
+      </div>
+    </div>`).join('');
+  rulesEl.innerHTML += `<div class="uranium-note">Uranium spot is not available via Twelve Data. Check manually at tradingeconomics.com/commodity/uranium — monthly cadence is sufficient.</div>`;
+}
+
+// Initial load
+renderSignals(Object.fromEntries(SIGNALS.map(s => [s.key, null])));
+fetchAll();
+</script>
+</body>
+</html>
