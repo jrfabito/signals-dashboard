@@ -1,4 +1,5 @@
-const yahooFinance = require('yahoo-finance2').default;
+const YahooFinance = require('yahoo-finance2').default;
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 
 // ---------------------------------------------------------------------------
 // Signal definitions — what we fetch, how we label it, and how we evaluate it
@@ -128,11 +129,13 @@ async function get52WeekHigh(symbol) {
     const startDate = new Date();
     startDate.setFullYear(startDate.getFullYear() - 1);
 
-    const rows = await yahooFinance.historical(symbol, {
+    const result = await yahooFinance.chart(symbol, {
       period1: startDate,
       period2: endDate,
       interval: '1d',
     });
+    // chart() returns { meta, quotes } — extract quotes array
+    const rows = Array.isArray(result) ? result : (result?.quotes ?? []);
 
     if (!rows || rows.length === 0) return null;
 
@@ -160,11 +163,13 @@ async function getConsecutiveCloseStreak(symbol, threshold, lookbackDays = 60) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - lookbackDays);
 
-    const rows = await yahooFinance.historical(symbol, {
+    const result = await yahooFinance.chart(symbol, {
       period1: startDate,
       period2: endDate,
       interval: '1d',
     });
+    // chart() returns { meta, quotes } — extract quotes array
+    const rows = Array.isArray(result) ? result : (result?.quotes ?? []);
 
     if (!rows || rows.length === 0) return 0;
 
