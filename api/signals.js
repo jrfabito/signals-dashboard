@@ -1,5 +1,4 @@
 const yahooFinance = require('yahoo-finance2').default;
-const { Redis } = require('@upstash/redis');
 
 // ---------------------------------------------------------------------------
 // Signal definitions — what we fetch, how we label it, and how we evaluate it
@@ -29,8 +28,8 @@ const SIGNAL_DEFS = [
     prefix: '',
     evaluate(val, ctx) {
       if (ctx.dxyExitTriggered) return { color: '#ef4444', label: 'EXIT GDXJ' };
-      if (val > 105)              return { color: '#f59e0b', label: 'Strong Dollar' };
-      if (val < 100)              return { color: '#34d399', label: 'Dollar Weakness' };
+      if (val > 105)            return { color: '#f59e0b', label: 'Strong Dollar' };
+      if (val < 100)            return { color: '#34d399', label: 'Dollar Weakness' };
       return { color: '#94a3b8', label: 'Neutral' };
     },
     desc: 'GDXJ exit if DXY > 105 for 3 consecutive closes.',
@@ -117,15 +116,80 @@ const ALERT_RULES = [
 ];
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Historical data helpers (stateless — compute peak + streak from Yahoo Finance)
 // ---------------------------------------------------------------------------
 
-function getRedis() {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  if (!url || !token) return null;
-  return new Redis({ url, token });
+/**
+ * Returns the 52-week high close price for a symbol.
+ */
+async function get52WeekHigh(symbol) {
+  try {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 1);
+
+    const rows = await yahooFinance.historical(symbol, {
+      period1: startDate,
+      period2: endDate,
+      interval: '1d',
+    });
+
+    if (!rows || rows.length === 0) return null;
+
+    let peak = -Infinity;
+    for (const row of rows) {
+      const close = row.close ?? row.adjClose;
+      if (typeof close === 'number' && close > peak) {
+        peak = close;
+      }
+    }
+    return peak !== -Infinity ? peak : null;
+  } catch (err) {
+    console.error(`[signals] 52-week high fetch failed for ${symbol}:`, err.message);
+    return null;
+  }
 }
+
+/**
+ * Returns the number of consecutive trading days (most recent first) where
+ * the daily close was above the threshold.
+ */
+async function getConsecutiveCloseStreak(symbol, threshold, lookbackDays = 60) {
+  try {
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - lookbackDays);
+
+    const rows = await yahooFinance.historical(symbol, {
+      period1: startDate,
+      period2: endDate,
+      interval: '1d',
+    });
+
+    if (!rows || rows.length === 0) return 0;
+
+    // Sort by date descending (most recent first)
+    const sorted = [...rows].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    let streak = 0;
+    for (const row of sorted) {
+      const close = row.close ?? row.adjClose;
+      if (typeof close === 'number' && close > threshold) {
+        streak++;
+      } else {
+        break; // streak broken
+      }
+    }
+    return streak;
+  } catch (err) {
+    console.error(`[signals] streak fetch failed for ${symbol}:`, err.message);
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DeepSeek AI Market Brief
+// ---------------------------------------------------------------------------
 
 async function getDeepSeekBrief(signalSummary) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -181,15 +245,13 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 1. Fetch all symbols from Yahoo Finance in parallel
+    // 1. Fetch all real-time quotes in parallel
     const symbols = SIGNAL_DEFS.map((s) => s.symbol);
     const quoteResult = await yahooFinance.quote(symbols);
-
-    // yahoo-finance2 returns an array for multiple symbols
     const quotes = Array.isArray(quoteResult) ? quoteResult : [quoteResult];
+
     const priceBySymbol = {};
     for (const q of quotes) {
-      // Use regularMarketPrice as the canonical price; fall back to bid/ask mid
       const price =
         q.regularMarketPrice ??
         (q.bid && q.ask ? (q.bid + q.ask) / 2 : null) ??
@@ -198,66 +260,27 @@ module.exports = async (req, res) => {
       priceBySymbol[q.symbol] = typeof price === 'number' ? price : null;
     }
 
-    // 2. Read persistent state from Upstash Redis
-    const redis = getRedis();
-    let soxPeak = null;
-    let dxyStreak = 0;
-    let dxyLastDate = null;
+    // 2. Fetch historical data for SOX peak and DXY streak in parallel
+    const [soxPeak, dxyStreak] = await Promise.all([
+      get52WeekHigh('^SOX'),
+      getConsecutiveCloseStreak('DX-Y.NYB', 105, 60),
+    ]);
 
-    if (redis) {
-      [soxPeak, dxyStreak, dxyLastDate] = await Promise.all([
-        redis.get('sox_peak'),
-        redis.get('dxy_above_105_streak'),
-        redis.get('dxy_last_close_date'),
-      ]);
-      dxyStreak = typeof dxyStreak === 'number' ? dxyStreak : 0;
-    }
-
-    // 3. Compute current SOX price and drawdown
+    // 3. Compute SOX drawdown
     const currentSoxPrice = priceBySymbol['^SOX'];
     let soxDrawdownPct = null;
 
-    if (currentSoxPrice !== null && currentSoxPrice !== undefined) {
-      if (soxPeak === null || soxPeak === undefined) {
-        // First run — seed the peak
-        soxPeak = currentSoxPrice;
-        if (redis) await redis.set('sox_peak', soxPeak);
-      } else if (currentSoxPrice > soxPeak) {
-        // New all-time high
-        soxPeak = currentSoxPrice;
-        if (redis) await redis.set('sox_peak', soxPeak);
-      }
+    if (currentSoxPrice !== null && currentSoxPrice !== undefined && soxPeak !== null) {
       soxDrawdownPct = ((soxPeak - currentSoxPrice) / soxPeak) * 100;
+    } else if (currentSoxPrice !== null && currentSoxPrice !== undefined) {
+      // No historical data — seed peak to current price (drawdown = 0%)
+      soxDrawdownPct = 0;
     }
 
-    // 4. Compute DXY streak
-    const currentDxyPrice = priceBySymbol['DX-Y.NYB'];
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-    let dxyExitTriggered = false;
+    // 4. Determine DXY exit trigger
+    const dxyExitTriggered = dxyStreak >= 3;
 
-    if (currentDxyPrice !== null && currentDxyPrice !== undefined && redis) {
-      if (dxyLastDate !== today) {
-        // New trading day — update streak
-        if (currentDxyPrice > 105) {
-          dxyStreak += 1;
-        } else {
-          dxyStreak = 0;
-        }
-        await redis.set('dxy_above_105_streak', dxyStreak);
-        await redis.set('dxy_last_close_date', today);
-      }
-      // If same day, don't double-count; just use existing streak
-      if (currentDxyPrice > 105 && dxyStreak >= 3) {
-        dxyExitTriggered = true;
-      }
-    } else if (currentDxyPrice !== null && currentDxyPrice !== undefined) {
-      // No Redis — best-effort single-day check
-      if (currentDxyPrice > 105) {
-        dxyStreak = 1;
-      }
-    }
-
-    // 5. Build context object for threshold evaluation
+    // 5. Build context for threshold evaluation
     const evalCtx = { soxPeak, soxDrawdownPct, dxyExitTriggered };
 
     // 6. Assemble signals array
@@ -290,35 +313,20 @@ module.exports = async (req, res) => {
       return entry;
     });
 
-    // 7. DeepSeek AI Market Brief (cached per signal snapshot in Redis, 10-min TTL)
+    // 7. DeepSeek AI Market Brief
     let aiBrief = null;
-    if (redis) {
-      const cacheKey = 'ai_brief_cache';
-      const cached = await redis.get(cacheKey);
-      if (cached && typeof cached === 'string') {
-        aiBrief = cached;
-      } else {
-        const summaryLines = signals.map((s) => {
-          const valStr = s.value !== null ? s.display : 'N/A';
-          return `- ${s.label}: ${valStr} (${s.status_label})`;
-        });
-        const summary = summaryLines.join('\n');
-        aiBrief = await getDeepSeekBrief(summary);
-        if (aiBrief) {
-          await redis.set(cacheKey, aiBrief, { ex: 600 }); // 10-min TTL
-        }
-      }
-    } else {
-      // No Redis — call DeepSeek without caching (be mindful of rate limits)
+    try {
       const summaryLines = signals.map((s) => {
         const valStr = s.value !== null ? s.display : 'N/A';
         return `- ${s.label}: ${valStr} (${s.status_label})`;
       });
       aiBrief = await getDeepSeekBrief(summaryLines.join('\n'));
+    } catch (_err) {
+      // DeepSeek failure is non-fatal
     }
 
-    // 8. Response
-    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
+    // 8. Response — 60-second CDN cache to prevent rapid-fire DeepSeek calls
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
     res.status(200).json({
       updated_at: new Date().toISOString(),
       signals,
