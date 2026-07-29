@@ -15,7 +15,10 @@
   .updated { font-size: 11px; color: #334155; }
   .refresh-btn { background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
   .refresh-btn:hover { background: #334155; }
+  .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { background: #3b1e1e; border: 1px solid #7f1d1d; border-radius: 8px; padding: 10px 14px; color: #f87171; font-size: 13px; margin-bottom: 20px; }
+  .ai-brief { background: #0f172a; border: 1px solid #1e293b; border-left: 3px solid #6366f1; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; font-size: 13px; line-height: 1.6; color: #cbd5e1; }
+  .ai-brief-label { font-size: 10px; color: #6366f1; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-weight: 700; }
   .signals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 32px; }
   .signal-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px; }
   .signal-label { font-size: 10px; color: #475569; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
@@ -47,6 +50,11 @@
 
   <div id="error-box" class="error" style="display:none;"></div>
 
+  <div id="ai-brief-container" class="ai-brief" style="display:none;">
+    <div class="ai-brief-label">AI Market Brief</div>
+    <div id="ai-brief-text"></div>
+  </div>
+
   <div class="signals-grid" id="signals-grid"></div>
 
   <div class="alert-section">
@@ -56,113 +64,56 @@
 </div>
 
 <script>
-const SIGNALS = [
-  { key: 'vix',      label: 'VIX',            symbol: 'VXX',     decimals: 2, desc: 'Deploy SGOV reserve at your discretion when VIX signals genuine market fear. Tracked via VXX ETF.' },
-  { key: 'dxy',      label: 'DXY',            symbol: 'UUP',     decimals: 2, desc: 'GDXJ exit if above 30.50 for 3 consecutive closes. Tracked via UUP ETF.' },
-  { key: 'wti',      label: 'WTI Crude',      symbol: 'USO',     decimals: 2, desc: 'Accelerate XOP/XLE exit if below $90 (~$60 WTI) sustained 30+ days. Tracked via USO ETF.' },
-  { key: 'treasury', label: '10Y Treasury',   symbol: 'TLT',     decimals: 2, desc: 'Below $80 (yield above ~5%) reinforces holding SGOV. Above $99 (yield below ~3.5%) watch energy positions. Tracked via TLT ETF.' },
-  { key: 'eurusd',   label: 'EUR/USD',        symbol: 'EUR/USD', decimals: 4, desc: 'Below 1.05 watch IEFA and FAN. Above 1.12 bullish for IEFA and FAN.' },
-  { key: 'sox',      label: 'SOX',            symbol: 'SOXX',    decimals: 2, desc: 'Down 20% from peak: watch IEMG and URA. Down 30%: review URA sizing.' },
-];
-
-const ALERT_RULES = [
-  { color: '#ef4444', if: 'UUP above 30.50 for 3 consecutive closes',           then: 'Sell ALL GDXJ across all accounts.' },
-  { color: '#f59e0b', if: 'VIX elevated — your judgment',                        then: 'Deploy SGOV reserve into IEFA and IEMG at discount. IRA reserve: $76,343. Brokerage 2 reserve: $60,000.' },
-  { color: '#f59e0b', if: 'USO below $90 (~$60 WTI) sustained 30+ days',        then: 'Accelerate XOP and XLE exits immediately. Rotate into IEFA.' },
-  { color: '#f59e0b', if: 'Uranium spot below $50/lb',                           then: 'Review URA sizing across all accounts. Check manually at tradingeconomics.com/commodity/uranium.' },
-  { color: '#6366f1', if: 'VIX rising AND DXY falling simultaneously',           then: 'Maximum conviction deployment signal. Deploy SGOV reserve aggressively into IEFA and IEMG.' },
-  { color: '#ef4444', if: 'USO below $90 (~$60 WTI) AND VXX above 35 sustained 30+ days', then: 'No energy positions remaining. Monitor IEMG for emerging market secondary impact.' },
-];
-
-function getStatus(key, val) {
-  if (val === null) return { color: '#475569', label: 'No data' };
-  switch (key) {
-    case 'vix':
-      if (val >= 35) return { color: '#ef4444', label: 'Structural Break' };
-      if (val >= 28) return { color: '#f97316', label: 'Confirmed Fear' };
-      if (val >= 22) return { color: '#f59e0b', label: 'Elevated Stress' };
-      if (val < 15)  return { color: '#6366f1', label: 'Complacency' };
-      return { color: '#34d399', label: 'Normal' };
-    case 'dxy':
-      if (val >= 30.50) return { color: '#ef4444', label: 'EXIT GDXJ' };
-      if (val >= 29.50) return { color: '#f59e0b', label: 'Watch Hard Assets' };
-      if (val < 28.00)  return { color: '#34d399', label: 'Dollar Weakness' };
-      return { color: '#94a3b8', label: 'Neutral' };
-    case 'wti':
-      // USO tracked ~1.5x WTI spot (WTI $83.5/bbl == USO $126.78, Jul 2026); ratio drifts with contango/roll costs, recheck periodically
-      if (val < 67.5)   return { color: '#ef4444', label: 'Demand Destruction' };
-      if (val < 90)     return { color: '#f59e0b', label: 'Watch Exits' };
-      if (val <= 112.5) return { color: '#34d399', label: 'Healthy Range' };
-      return { color: '#6366f1', label: 'Strong' };
-    case 'treasury':
-      // TLT price moves inverse to yield (long duration ETF); calibrated at 10Y yield 4.64% == TLT $83.77, Jul 2026
-      if (val < 80)  return { color: '#ef4444', label: 'Fiscal Stress' };
-      if (val > 99)  return { color: '#f59e0b', label: 'Recession Signal' };
-      return { color: '#34d399', label: 'Normal' };
-    case 'eurusd':
-      if (val < 1.05) return { color: '#f59e0b', label: 'Euro Weakness' };
-      if (val > 1.12) return { color: '#34d399', label: 'Euro Strength' };
-      return { color: '#94a3b8', label: 'Neutral' };
-    case 'sox':
-      return { color: '#94a3b8', label: 'See description' };
-    default:
-      return { color: '#94a3b8', label: '—' };
-  }
-}
-
-function prefix(key) {
-  return ['wti', 'treasury'].includes(key) ? '$' : '';
-}
-
-async function fetchPrice(symbol) {
-  try {
-    const url = `/api/price?symbol=${encodeURIComponent(symbol)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!res.ok || !data || data.price === undefined || data.price === null) {
-      console.error(`[signals] ${symbol} returned no usable price:`, data);
-      return null;
-    }
-    return parseFloat(data.price);
-  } catch (err) {
-    console.error(`[signals] ${symbol} fetch failed:`, err);
-    return null;
-  }
-}
+let cachedData = null;
 
 async function fetchAll() {
-  const btn = document.getElementById('refresh-btn') || document.querySelector('.refresh-btn');
+  const btn = document.querySelector('.refresh-btn');
+  const errorBox = document.getElementById('error-box');
   btn.textContent = 'Fetching...';
   btn.disabled = true;
+  errorBox.style.display = 'none';
 
-  const results = {};
-  await Promise.all(SIGNALS.map(async s => {
-    results[s.key] = await fetchPrice(s.symbol);
-  }));
-
-  renderSignals(results);
-  document.getElementById('updated-time').textContent = 'Updated ' + new Date().toLocaleTimeString();
-  btn.textContent = 'Refresh';
-  btn.disabled = false;
+  try {
+    const res = await fetch('/api/signals');
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    cachedData = await res.json();
+    renderAll(cachedData);
+    document.getElementById('updated-time').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    console.error('[signals] fetchAll failed:', err);
+    errorBox.textContent = 'Failed to fetch signals. ' + err.message;
+    errorBox.style.display = 'block';
+    // Fall back to last cached data if available
+    if (cachedData) renderAll(cachedData);
+  } finally {
+    btn.textContent = 'Refresh';
+    btn.disabled = false;
+  }
 }
 
-function renderSignals(data) {
-  const grid = document.getElementById('signals-grid');
-  grid.innerHTML = SIGNALS.map(s => {
-    const val = data[s.key];
-    const { color, label } = getStatus(s.key, val);
-    const display = val !== null ? `${prefix(s.key)}${val.toFixed(s.decimals)}` : '--';
-    return `
-      <div class="signal-card">
-        <div class="signal-label">${s.label}</div>
-        <div class="signal-value">${display}</div>
-        <div class="signal-status" style="color:${color}">${label}</div>
-        <div class="signal-desc">${s.desc}</div>
-      </div>`;
-  }).join('');
+function renderAll(data) {
+  renderSignals(data.signals);
+  renderAlertRules(data.alert_rules);
+  renderAiBrief(data.ai_brief);
+}
 
+function renderSignals(signals) {
+  const grid = document.getElementById('signals-grid');
+  grid.innerHTML = signals.map(s => `
+    <div class="signal-card">
+      <div class="signal-label">${s.label}</div>
+      <div class="signal-value">${s.display}</div>
+      <div class="signal-status" style="color:${s.status_color}">${s.status_label}</div>
+      <div class="signal-desc">${s.desc}</div>
+    </div>`).join('');
+}
+
+function renderAlertRules(rules) {
   const rulesEl = document.getElementById('alert-rules');
-  rulesEl.innerHTML = ALERT_RULES.map(r => `
+  rulesEl.innerHTML = rules.map(r => `
     <div class="alert-rule">
       <div class="rule-bar" style="background:${r.color}"></div>
       <div>
@@ -170,11 +121,22 @@ function renderSignals(data) {
         <div class="rule-then">THEN: ${r.then}</div>
       </div>
     </div>`).join('');
-  rulesEl.innerHTML += `<div class="uranium-note">Uranium spot is not available via Twelve Data. Check manually at tradingeconomics.com/commodity/uranium — monthly cadence is sufficient.</div>`;
+  rulesEl.innerHTML += `<div class="uranium-note">Uranium spot is not available via Yahoo Finance. Sprott trust price shown above is for daily monitoring. Confirm against Cameco/UxC/Numerco monthly. Check manually at tradingeconomics.com/commodity/uranium.</div>`;
 }
 
-// Initial load
-renderSignals(Object.fromEntries(SIGNALS.map(s => [s.key, null])));
+function renderAiBrief(brief) {
+  const container = document.getElementById('ai-brief-container');
+  const text = document.getElementById('ai-brief-text');
+  if (brief) {
+    container.style.display = 'block';
+    text.textContent = brief;
+  } else {
+    container.style.display = 'none';
+  }
+}
+
+// Initial load — render empty shells, then fetch
+renderSignals([]);
 fetchAll();
 </script>
 </body>

@@ -20,5 +20,9 @@
   "homepage": "https://github.com/jrfabito/signals-dashboard#readme",
   "devDependencies": {
     "vercel": "^57.0.0"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.38.0",
+    "yahoo-finance2": "^4.0.0"
   }
 }
