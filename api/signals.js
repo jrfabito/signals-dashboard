@@ -45,9 +45,9 @@ const SIGNAL_DEFS = [
       if (val < 60)   return { color: '#ef4444', label: 'Demand Destruction' };
       if (val < 70)   return { color: '#f59e0b', label: 'Watch Exits' };
       if (val <= 90)  return { color: '#34d399', label: 'Healthy Range' };
-      return { color: '#6366f1', label: 'Strong' };
+      return { color: '#6366f1', label: 'Strong Energy Environment' };
     },
-    desc: 'Accelerate XOP/XLE exit if WTI below $60 sustained 30+ days.',
+    desc: 'WTI below $60 sustained 30+ days signals energy-adjacent exposure review (e.g. MP, URA).',
   },
   {
     key: 'treasury',
@@ -61,7 +61,7 @@ const SIGNAL_DEFS = [
       if (val < 3.5)  return { color: '#f59e0b', label: 'Recession Signal' };
       return { color: '#34d399', label: 'Normal' };
     },
-    desc: 'Yield > 5% reinforces holding SGOV. Yield < 3.5% watch energy positions.',
+    desc: 'Yield > 5% reinforces holding SGOV. Yield < 3.5% watch energy-adjacent positions.',
   },
   {
     key: 'eurusd',
@@ -110,10 +110,10 @@ const SIGNAL_DEFS = [
 const ALERT_RULES = [
   { color: '#ef4444', if: 'DXY above 105 for 3 consecutive closes',           then: 'Sell ALL GDXJ across all accounts.' },
   { color: '#f59e0b', if: 'VIX elevated — your judgment',                      then: 'Deploy SGOV reserve into IEFA and IEMG at discount. IRA reserve: $76,343. Brokerage 2 reserve: $60,000.' },
-  { color: '#f59e0b', if: 'WTI below $60 sustained 30+ days',                  then: 'Accelerate XOP and XLE exits immediately. Rotate into IEFA.' },
-  { color: '#f59e0b', if: 'Uranium spot below $50/lb',                         then: 'Review URA sizing across all accounts. Check manually at tradingeconomics.com/commodity/uranium.' },
+  { color: '#f59e0b', if: 'WTI below $60 sustained 30+ days',                  then: 'Review energy-adjacent exposure (e.g., MP, URA). No active energy equity positions remaining.' },
+  { color: '#f59e0b', if: 'Uranium spot below $50/lb',                         then: 'Review URA sizing across all accounts. Check manually at <a href="https://tradingeconomics.com/commodity/uranium" target="_blank" style="color:#6366f1; text-decoration:underline;">tradingeconomics.com/commodity/uranium</a>.' },
   { color: '#6366f1', if: 'VIX rising AND DXY falling simultaneously',         then: 'Maximum conviction deployment signal. Deploy SGOV reserve aggressively into IEFA and IEMG.' },
-  { color: '#ef4444', if: 'WTI below $60 AND VIX above 35 sustained 30+ days', then: 'No energy positions remaining. Monitor IEMG for emerging market secondary impact.' },
+  { color: '#ef4444', if: 'WTI below $60 AND VIX above 35 sustained 30+ days', then: 'Monitor IEMG for emerging market secondary impact. (No active energy equity positions remaining.)' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ async function getDeepSeekBrief(signalSummary) {
 Current signals:
 ${signalSummary}
 
-The standing alert rules are: DXY > 105 for 3 consecutive closes triggers a GDXJ exit signal. WTI below $60 sustained signals energy position review. VIX thresholds are: 22 elevated, 28 confirmed fear, 35 structural break. SOX drawdowns of 20% and 30% are monitoring levels. EUR/USD below 1.05 or above 1.12 are notable thresholds. 10Y Treasury yield above 5% or below 3.5% are notable thresholds.
+The standing alert rules are: DXY > 105 for 3 consecutive closes triggers a GDXJ exit signal. WTI below $60 sustained signals energy-adjacent exposure review. VIX thresholds are: 22 elevated, 28 confirmed fear, 35 structural break. SOX drawdowns of 20% and 30% are monitoring levels. EUR/USD below 1.05 or above 1.12 are notable thresholds. 10Y Treasury yield above 5% or below 3.5% are notable thresholds.
 
 Write 3–4 sentences describing what conditions are present and which thresholds are currently triggered or approaching. Do not recommend or instruct any action. Do not use words like "should," "consider," "deploy," or "sell." Simply state what the numbers show relative to the thresholds.`;
 
@@ -285,6 +285,33 @@ module.exports = async (req, res) => {
     // 4. Determine DXY exit trigger
     const dxyExitTriggered = dxyStreak >= 3;
 
+    // 4b. Check combined signal trigger conditions: VIX change > 5.0% and DXY change < -0.3%
+    const vixQuote = quotes.find(q => q.symbol === '^VIX');
+    let vixChangePercent = null;
+    if (vixQuote) {
+      if (typeof vixQuote.regularMarketChangePercent === 'number') {
+        vixChangePercent = vixQuote.regularMarketChangePercent;
+      } else if (typeof vixQuote.regularMarketPrice === 'number' && typeof vixQuote.regularMarketPreviousClose === 'number' && vixQuote.regularMarketPreviousClose !== 0) {
+        vixChangePercent = ((vixQuote.regularMarketPrice - vixQuote.regularMarketPreviousClose) / vixQuote.regularMarketPreviousClose) * 100;
+      }
+    }
+
+    const dxyQuote = quotes.find(q => q.symbol === 'DX-Y.NYB');
+    let dxyChangePercent = null;
+    if (dxyQuote) {
+      if (typeof dxyQuote.regularMarketChangePercent === 'number') {
+        dxyChangePercent = dxyQuote.regularMarketChangePercent;
+      } else if (typeof dxyQuote.regularMarketPrice === 'number' && typeof dxyQuote.regularMarketPreviousClose === 'number' && dxyQuote.regularMarketPreviousClose !== 0) {
+        dxyChangePercent = ((dxyQuote.regularMarketPrice - dxyQuote.regularMarketPreviousClose) / dxyQuote.regularMarketPreviousClose) * 100;
+      }
+    }
+
+    const vixRisingDxyFallingTriggered =
+      vixChangePercent !== null &&
+      dxyChangePercent !== null &&
+      vixChangePercent > 5.0 &&
+      dxyChangePercent < -0.3;
+
     // 5. Build context for threshold evaluation
     const evalCtx = { soxPeak, soxDrawdownPct, dxyExitTriggered };
 
@@ -330,6 +357,32 @@ module.exports = async (req, res) => {
       // DeepSeek failure is non-fatal
     }
 
+    // 7.5 Evaluate alert rules active state dynamically
+    const vixPrice = priceBySymbol['^VIX'];
+    const wtiPrice = priceBySymbol['CL=F'];
+    const uraniumPrice = priceBySymbol['U-UN.TO'];
+
+    const evaluatedRules = ALERT_RULES.map((rule) => {
+      let active = false;
+      const cond = rule.if.toLowerCase();
+
+      if (cond.includes('dxy above 105') && cond.includes('consecutive closes')) {
+        active = dxyExitTriggered;
+      } else if (cond.includes('vix elevated')) {
+        active = typeof vixPrice === 'number' && vixPrice >= 22;
+      } else if (cond.includes('wti below $60') && cond.includes('vix above 35')) {
+        active = typeof wtiPrice === 'number' && wtiPrice < 60 && typeof vixPrice === 'number' && vixPrice >= 35;
+      } else if (cond.includes('wti below $60')) {
+        active = typeof wtiPrice === 'number' && wtiPrice < 60;
+      } else if (cond.includes('uranium spot below')) {
+        active = false; // Always false, requires manual check via URL link
+      } else if (cond.includes('vix rising') && cond.includes('dxy falling')) {
+        active = !!vixRisingDxyFallingTriggered;
+      }
+
+      return { ...rule, active };
+    });
+
     // 8. Response — 60-second CDN cache to prevent rapid-fire DeepSeek calls
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=60');
     res.status(200).json({
@@ -337,7 +390,8 @@ module.exports = async (req, res) => {
       signals,
       dxy_streak: dxyStreak,
       dxy_exit_triggered: dxyExitTriggered,
-      alert_rules: ALERT_RULES,
+      vix_rising_dxy_falling_triggered: vixRisingDxyFallingTriggered,
+      alert_rules: evaluatedRules,
       ai_brief: aiBrief,
     });
   } catch (err) {

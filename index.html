@@ -113,14 +113,29 @@ function renderSignals(signals) {
 
 function renderAlertRules(rules) {
   const rulesEl = document.getElementById('alert-rules');
-  rulesEl.innerHTML = rules.map(r => `
-    <div class="alert-rule">
-      <div class="rule-bar" style="background:${r.color}"></div>
-      <div>
-        <div class="rule-if">IF: ${r.if}</div>
-        <div class="rule-then">THEN: ${r.then}</div>
-      </div>
-    </div>`).join('');
+  rulesEl.innerHTML = rules.map(r => {
+    const isTriggered = !!r.active;
+
+    const barColor = isTriggered ? r.color : '#334155';
+    const cardStyle = isTriggered 
+      ? `border: 1px solid ${r.color}; box-shadow: 0 0 12px ${r.color}22; border-radius: 8px; margin: 6px 0; padding: 12px 10px; background: #161e2f;`
+      : '';
+    const ifColor = isTriggered ? '#f1f5f9' : '#64748b';
+    const thenColor = isTriggered ? '#cbd5e1' : '#475569';
+
+    const badgeHtml = isTriggered 
+      ? `<span style="background:${r.color}; color:#fff; font-size:9px; font-weight:700; padding:2px 6px; border-radius:4px; margin-left:8px; text-transform:uppercase; letter-spacing:1px; vertical-align:middle;">Triggered</span>` 
+      : '';
+
+    return `
+      <div class="alert-rule" style="${cardStyle}">
+        <div class="rule-bar" style="background:${barColor}"></div>
+        <div>
+          <div class="rule-if" style="color:${ifColor}">IF: ${r.if}${badgeHtml}</div>
+          <div class="rule-then" style="color:${thenColor}">THEN: ${r.then}</div>
+        </div>
+      </div>`;
+  }).join('');
   rulesEl.innerHTML += `<div class="uranium-note">Uranium spot is not available via Yahoo Finance. Sprott trust price shown above is for daily monitoring. Confirm against Cameco/UxC/Numerco monthly. Check manually at tradingeconomics.com/commodity/uranium.</div>`;
 }
 
